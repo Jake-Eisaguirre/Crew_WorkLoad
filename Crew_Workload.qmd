@@ -1,0 +1,42 @@
+---
+title: "Crew_WorkLoad"
+format: html
+editor: source
+---
+
+## Packages
+```{r}
+
+if (!require(librarian)){
+  install.packages("librarian")
+  library(librarian)
+}
+
+# librarian downloads, if not already downloaded, and reads in needed packages
+librarian::shelf(tidyverse, here, DBI, odbc)
+
+
+
+```
+
+## Database Connection
+```{r}
+# Connect to the `PLAYGROUND` database and append data if necessary
+tryCatch({
+  db_connection <- DBI::dbConnect(odbc::odbc(),
+                                     Driver = "SnowflakeDSIIDriver",
+                                     Server = "hawaiianair.west-us-2.azure.snowflakecomputing.com",
+                                     WAREHOUSE = "DATA_LAKE_READER",
+                                     Database = "CREW_ANALYTICS",
+                                     UID = "jacob.eisaguirre@hawaiianair.com",
+                                     authenticator = "externalbrowser")
+  print("Database Connected!")
+}, error = function(cond) {
+  print("Unable to connect to Database.")
+})
+
+# Set schema and retrieve data from `AA_FINAL_PAIRING` table
+dbExecute(db_connection, "USE SCHEMA CREW_ANALYTICS")
+
+```
+
