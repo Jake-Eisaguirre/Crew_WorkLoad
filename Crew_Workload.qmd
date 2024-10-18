@@ -75,9 +75,38 @@ clean_flightleg <- raw_flightleg %>%
 
 mp_q <- "select CREW_ID, BID_PERIOD, PAIRING_NO, PAIRING_DATE, PAIRING_POSITION, PAIRING_STATUS, UPDATE_DATE, UPDATE_TIME
          FROM CT_MASTER_PAIRING
-         LIMIT 10;"
+         WHERE PAIRING_DATE > '2022-12-25';"
+
 
 raw_masterpairing <- dbGetQuery(db_connection, mp_q)
+
+```
+
+
+## Clean Master Pairing
+```{r}
+
+clean_mp <- raw_masterpairing %>% 
+  mutate(update_dt = paste0(UPDATE_DATE, UPDATE_TIME, sep = " ")) %>% 
+  filter(PAIRING_STATUS == "A")
+
+```
+
+## Join Together
+```{r}
+
+pairing <- inner_join(clean_flightleg, clean_mp, by = c("PAIRING_NO", "PAIRING_DATE", "PAIRING_POSITION"))
+
+
+```
+
+
+## Summarize - Fleet/Seet
+```{r}
+
+gold_dt <- pairing %>% 
+  group_by(PAIRING_POSITION, FLIGHT_DATE) %>% 
+  reframe(n = n())
 
 ```
 
