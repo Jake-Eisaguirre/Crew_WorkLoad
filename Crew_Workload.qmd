@@ -64,7 +64,8 @@ clean_flightleg <- raw_flightleg %>%
            PAIRING_POSITION) %>% 
   filter(update_dt == max(update_dt)) %>% 
   mutate(p_key = cur_group_id()) %>% 
-  filter(!duplicated(p_key))
+  filter(!duplicated(p_key)) %>% 
+  filter(is.na(DEADHEAD))
 
 
 ```
@@ -95,7 +96,10 @@ clean_mp <- raw_masterpairing %>%
 ## Join Together
 ```{r}
 
-pairing <- inner_join(clean_flightleg, clean_mp, by = c("PAIRING_NO", "PAIRING_DATE", "PAIRING_POSITION"))
+pairing <- inner_join(clean_flightleg, clean_mp, by = c("PAIRING_NO", "PAIRING_DATE", "PAIRING_POSITION")) %>% 
+    mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
+                                   PAIRING_POSITION, 
+                                   "FA"))
 
 
 ```
