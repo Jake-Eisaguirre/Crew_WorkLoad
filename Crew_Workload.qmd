@@ -61,7 +61,7 @@ clean_fp <- raw_fp %>%
                                    "FA"),
          EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT)) %>%
   group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT) %>% 
-  reframe(n_bid = n())
+  reframe(n_bid = length(unique(CREW_ID)))
   
 
 ```
@@ -71,6 +71,7 @@ clean_fp <- raw_fp %>%
 ```{r}
 
 clean_reserve <- raw_reserve %>% 
+  filter(TRANSACTION_CODE %in% c("RLV", "SCR", "ARC")) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA")) %>% 
