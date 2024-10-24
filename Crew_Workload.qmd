@@ -19,6 +19,107 @@ librarian::shelf(tidyverse, here, DBI, odbc)
 
 ```
 
+
+## Pull in Reserve count 
+```{r}
+# Connect to the `PLAYGROUND` database and append data if necessary
+tryCatch({
+  db_connection_pg <- DBI::dbConnect(odbc::odbc(),  # Establish a database connection using ODBC for the playground database
+                                     Driver = "SnowflakeDSIIDriver",  # Specify the Snowflake ODBC driver
+                                     Server = "hawaiianair.west-us-2.azure.snowflakecomputing.com",  # Server address
+                                     WAREHOUSE = "DATA_LAKE_READER",  # Specify the Snowflake warehouse
+                                     Database = "PLAYGROUND",  # Specify the database name
+                                     UID = "jacob.eisaguirre@hawaiianair.com",  # User ID for authentication
+                                     authenticator = "externalbrowser")  # Use external browser for authentication
+  print("Database Connected!")  # Print success message if connection is established
+}, error = function(cond) {
+  print("Unable to connect to Database.")  # Print error message if connection fails
+})
+
+# Set schema and retrieve data from `AA_FINAL_PAIRING` table
+dbExecute(db_connection_pg, "USE SCHEMA CREW_ANALYTICS") 
+
+
+# Queries
+reserve_q <- "select * from AA_RESERVE_UTILIZATION WHERE PAIRING_DATE > '2022-12-25';"
+
+raw_reserve <- dbGetQuery(db_connection_pg, reserve_q)
+
+fp_q <- "select* from AA_FINAL_PAIRING WHERE PAIRING_DATE > '2022-12-25';"
+
+raw_fp <- dbGetQuery(db_connection_pg, fp_q)
+
+```
+
+# Clean Final Pairing
+```{r}
+
+clean_fp <- raw_fp %>% 
+  select(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, CREW_ID) %>% 
+  mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
+                                   PAIRING_POSITION, 
+                                   "FA"),
+         EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT)) %>%
+  group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT) %>% 
+  reframe(n_bid = n())
+  
+
+```
+
+
+## Clean Reserve
+```{r}
+
+clean_reserve <- raw_reserve %>% 
+  mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
+                                   PAIRING_POSITION, 
+                                   "FA")) %>% 
+  group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT) %>% 
+  reframe(n_reserve = n()) %>% 
+  mutate(EQUIPMENT = if_else(EQUIPMENT == "NA", NA, EQUIPMENT)) %>% 
+  rename(FLIGHT_DATE = PAIRING_DATE)
+
+
+```
+
+## Join Counts
+```{r}
+
+combined_gold <- inner_join(clean_fp, clean_reserve) %>% 
+  mutate(workload = round((n_reserve/n_bid),2))
+
+
+```
+## visualize
+```{r}
+
+ggplot(data = combined_gold, aes(x=FLIGHT_DATE, y=workload, color=PAIRING_POSITION)) +
+  geom_smooth(se=F) +
+  theme_classic() +
+  ylab("Workload (reservers/pairing)") +
+  xlab("Pairing Date")
+
+```
+
+
+
+
+
+
+
+### OLD #####
+
+
+
+
+
+
+
+
+
+
+
+
 ## Database Connection
 ```{r}
 # Connect to the `ENTERPRISE` database
@@ -93,7 +194,16 @@ clean_mp <- raw_masterpairing %>%
   group_by(PAIRING_NO, PAIRING_DATE) %>% 
   filter(PAIRING_STATUS == "A",
          update_dt == max(update_dt))%>% 
-  select(!c(update_dt, UPDATE_DATE, UPDATE_TIME))
+  select(!c(update_dt, UPDATE_DATE, UPDATE_TIME)) %>% 
+  mutate(PAIRING_POSITION = if_else(PAIRING_POSITION == "RO", "FO", PAIRING_POSITION))%>% 
+    mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
+                                   PAIRING_POSITION, 
+                                   "FA"))
+
+
+gold_mp <- clean_mp %>% 
+  group_by(PAIRING_POSITION, PAIRING_DATE) %>% 
+  reframe(n_bid = n())
 
 ```
 
@@ -158,52 +268,3 @@ gold_dt <- pairing_equipment %>%
   filter(!PAIRING_POSITION == "RO")
 
 ```
-
-
-## Pull in Reserve count 
-```{r}
-# Connect to the `PLAYGROUND` database and append data if necessary
-tryCatch({
-  db_connection_pg <- DBI::dbConnect(odbc::odbc(),  # Establish a database connection using ODBC for the playground database
-                                     Driver = "SnowflakeDSIIDriver",  # Specify the Snowflake ODBC driver
-                                     Server = "hawaiianair.west-us-2.azure.snowflakecomputing.com",  # Server address
-                                     WAREHOUSE = "DATA_LAKE_READER",  # Specify the Snowflake warehouse
-                                     Database = "PLAYGROUND",  # Specify the database name
-                                     UID = "jacob.eisaguirre@hawaiianair.com",  # User ID for authentication
-                                     authenticator = "externalbrowser")  # Use external browser for authentication
-  print("Database Connected!")  # Print success message if connection is established
-}, error = function(cond) {
-  print("Unable to connect to Database.")  # Print error message if connection fails
-})
-
-# Set schema and retrieve data from `AA_FINAL_PAIRING` table
-dbExecute(db_connection_pg, "USE SCHEMA CREW_ANALYTICS") 
-
-reserve_q <- "select * from AA_RESERVE_UTILIZATION WHERE PAIRING_DATE > '2022-12-25';"
-
-raw_reserve <- dbGetQuery(db_connection_pg, reserve_q)
-
-```
-
-## Clean Reserve
-```{r}
-
-clean_reserve <- raw_reserve %>% 
-  mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
-                                   PAIRING_POSITION, 
-                                   "FA")) %>% 
-  group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT) %>% 
-  reframe(n_reserve = n()) %>% 
-  mutate(EQUIPMENT = if_else(EQUIPMENT == "NA", NA, EQUIPMENT))
-
-```
-
-## Join Counts
-```{r}
-
-combined_gold <- inner_join(gold_dt, clean_reserve) %>% 
-  mutate(workload = (n_reserve/n_bid) * 100)
-
-```
-
-
