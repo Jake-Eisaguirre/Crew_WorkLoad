@@ -13,7 +13,7 @@ if (!require(librarian)){
 }
 
 # librarian downloads, if not already downloaded, and reads in needed packages
-librarian::shelf(tidyverse, here, DBI, odbc)
+librarian::shelf(tidyverse, here, DBI, odbc, writexl)
 
 
 
@@ -55,12 +55,12 @@ raw_fp <- dbGetQuery(db_connection_pg, fp_q)
 ```{r}
 
 clean_fp <- raw_fp %>% 
-  select(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, CREW_ID) %>% 
+  select(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, CREW_ID, BASE) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA"),
          EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT)) %>%
-  group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT) %>% 
+  group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, BASE) %>% 
   reframe(n_bid = length(unique(CREW_ID)))
   
 
@@ -75,7 +75,7 @@ clean_reserve <- raw_reserve %>%
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA")) %>% 
-  group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT) %>% 
+  group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT, BASE) %>% 
   reframe(n_reserve = n()) %>% 
   mutate(EQUIPMENT = if_else(EQUIPMENT == "NA", NA, EQUIPMENT)) %>% 
   rename(FLIGHT_DATE = PAIRING_DATE)
@@ -89,183 +89,7 @@ clean_reserve <- raw_reserve %>%
 combined_gold <- inner_join(clean_fp, clean_reserve) %>% 
   mutate(workload = round((n_reserve/n_bid),2))
 
+write_xlsx(combined_gold, "Z:/OperationsResourcePlanningAnalysis/Work_Load/workload_data.xlsx")
 
-```
-## visualize
-```{r}
-
-ggplot(data = combined_gold, aes(x=FLIGHT_DATE, y=workload, color=PAIRING_POSITION)) +
-  geom_smooth(se=F) +
-  theme_classic() +
-  ylab("Workload (reservers/pairing)") +
-  xlab("Pairing Date")
-
-```
-
-
-
-
-
-
-
-### OLD #####
-
-
-
-
-
-
-
-
-
-
-
-
-## Database Connection
-```{r}
-# Connect to the `ENTERPRISE` database
-tryCatch({
-  db_connection <- DBI::dbConnect(odbc::odbc(),
-                                     Driver = "SnowflakeDSIIDriver",
-                                     Server = "hawaiianair.west-us-2.azure.snowflakecomputing.com",
-                                     WAREHOUSE = "DATA_LAKE_READER",
-                                     Database = "ENTERPRISE",
-                                     UID = "jacob.eisaguirre@hawaiianair.com",
-                                     authenticator = "externalbrowser")
-  print("Database Connected!")
-}, error = function(cond) {
-  print("Unable to connect to Database.")
-})
-
-# Set schema
-dbExecute(db_connection, "USE SCHEMA CREW_ANALYTICS")
-
-```
-
-
-## Query Flight Leg
-```{r}
-
-fl_q <- "select FLIGHT_NO, FLIGHT_DATE, DEPARTING_CITY, ARRIVAL_CITY, PAIRING_NO, PAIRING_DATE, 
-         SCHED_DEPARTURE_DATE, SCHED_DEPARTURE_TIME, SCHED_ARRIVAL_TIME, DEADHEAD, PAIRING_POSITION, UPDATE_DATE, UPDATE_TIME
-         FROM CT_FLIGHT_LEG
-         WHERE FLIGHT_DATE > '2023-01-01';"
-
-raw_flightleg <- dbGetQuery(db_connection, fl_q)
-
-
-```
-
-## Clean Flight leg
-```{r}
-
-clean_flightleg <- raw_flightleg %>% 
-  mutate(update_dt = paste0(UPDATE_DATE, UPDATE_TIME, sep = " ")) %>% 
-  group_by(FLIGHT_NO, FLIGHT_DATE, DEPARTING_CITY, ARRIVAL_CITY, PAIRING_NO, 
-           PAIRING_DATE, SCHED_DEPARTURE_DATE, SCHED_DEPARTURE_TIME, SCHED_ARRIVAL_TIME, 
-           PAIRING_POSITION) %>% 
-  filter(update_dt == max(update_dt)) %>% 
-  mutate(p_key = cur_group_id()) %>% 
-  filter(!duplicated(p_key)) %>% 
-  filter(is.na(DEADHEAD))%>% 
-  select(!c(p_key, update_dt, UPDATE_DATE, UPDATE_TIME))
-
-
-```
-
-
-## Query Master Pairing
-```{r}
-
-mp_q <- "select CREW_ID, BID_PERIOD, PAIRING_NO, PAIRING_DATE, PAIRING_POSITION, PAIRING_STATUS, UPDATE_DATE, UPDATE_TIME
-         FROM CT_MASTER_PAIRING
-         WHERE PAIRING_DATE > '2022-12-25';"
-
-
-raw_masterpairing <- dbGetQuery(db_connection, mp_q)
-
-```
-
-
-## Clean Master Pairing
-```{r}
-
-clean_mp <- raw_masterpairing %>% 
-  mutate(update_dt = paste0(UPDATE_DATE, UPDATE_TIME, sep = " ")) %>% 
-  group_by(PAIRING_NO, PAIRING_DATE) %>% 
-  filter(PAIRING_STATUS == "A",
-         update_dt == max(update_dt))%>% 
-  select(!c(update_dt, UPDATE_DATE, UPDATE_TIME)) %>% 
-  mutate(PAIRING_POSITION = if_else(PAIRING_POSITION == "RO", "FO", PAIRING_POSITION))%>% 
-    mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
-                                   PAIRING_POSITION, 
-                                   "FA"))
-
-
-gold_mp <- clean_mp %>% 
-  group_by(PAIRING_POSITION, PAIRING_DATE) %>% 
-  reframe(n_bid = n())
-
-```
-
-## Join Together
-```{r}
-
-pairing <- inner_join(clean_flightleg, clean_mp, by = c("PAIRING_NO", "PAIRING_DATE", "PAIRING_POSITION")) %>% 
-    mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
-                                   PAIRING_POSITION, 
-                                   "FA")) %>% 
-  select(!c(DEADHEAD, PAIRING_STATUS))
-
-
-```
-
-## Flight History - Equipment
-```{r}
-
-fh_q <- "select FLIGHT_NO, FLIGHT_DATE, DEPARTING_CITY, ARRIVAL_CITY, SEGMENT_STATUS, EQUIPMENT, UPDATE_DATE, UPDATE_TIME,
-         SCHED_DEPARTURE_TIME_RAW, SCHED_ARRIVAL_TIME
-         from CT_FLIGHT_HISTORY
-         WHERE FLIGHT_DATE >= '2023-01-01';"
-
-raw_flight_history <- dbGetQuery(db_connection, fh_q)
-
-```
-
-## Clean Flight History
-```{r}
-
-clean_flighthistory <- raw_flight_history %>% 
-  mutate(update_dt = paste0(UPDATE_DATE, UPDATE_TIME, sep = " ")) %>% 
-  group_by(FLIGHT_NO, FLIGHT_DATE, DEPARTING_CITY, ARRIVAL_CITY, SCHED_DEPARTURE_TIME_RAW, SCHED_ARRIVAL_TIME) %>% 
-  filter(SEGMENT_STATUS == "A",
-         update_dt == max(update_dt)) %>% 
-  mutate(temp_id = cur_group_id()) %>% 
-  filter(!duplicated(temp_id)) %>% 
-  rename(SCHED_DEPARTURE_TIME = SCHED_DEPARTURE_TIME_RAW) %>% 
-  select(!c(temp_id, update_dt, UPDATE_DATE, UPDATE_TIME, SEGMENT_STATUS))
-
-  
-
-```
-
-## Join for Equipment
-```{r}
-
-pairing_equipment <- inner_join(pairing, clean_flighthistory) %>%
-  filter(!EQUIPMENT == "33Y") %>% 
-  mutate(EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT))
-
-```
-
-
-
-## Summarize - Fleet/Seet
-```{r}
-
-gold_dt <- pairing_equipment %>% 
-  group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT) %>% 
-  reframe(n_bid = n()) %>% 
-  filter(!PAIRING_POSITION == "RO")
 
 ```
