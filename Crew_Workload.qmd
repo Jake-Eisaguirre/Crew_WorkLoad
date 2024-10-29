@@ -16,7 +16,7 @@ if (!require(librarian)){
 librarian::shelf(tidyverse, here, DBI, odbc, writexl)
 
 
-
+prev_bid_period <- substr(as.character(Sys.Date() - 30), 1, 7)
 ```
 
 
@@ -55,13 +55,19 @@ raw_fp <- dbGetQuery(db_connection_pg, fp_q)
 ```{r}
 
 clean_fp <- raw_fp %>% 
-  select(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, CREW_ID, BASE) %>% 
+  select(FLIGHT_DATE, PAIRING_POSITION, BID_PERIOD, EQUIPMENT, CREW_ID, BASE) %>% 
+  filter(!EQUIPMENT == "33Y",
+         BID_PERIOD >= prev_bid_period) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA"),
-         EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT)) %>%
+         EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT),
+         BASE = if_else(BASE == "HAL", "HNL", BASE)) %>%
   group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, BASE) %>% 
-  reframe(n_bid = length(unique(CREW_ID)))
+  reframe(BID_PERIOD,
+          n_bid = length(unique(CREW_ID))) %>% 
+  distinct()
+  
   
 
 ```
@@ -71,14 +77,17 @@ clean_fp <- raw_fp %>%
 ```{r}
 
 clean_reserve <- raw_reserve %>% 
-  filter(TRANSACTION_CODE %in% c("RLV", "SCR", "ARC")) %>% 
+  filter(TRANSACTION_CODE %in% c("RLV", "SCR", "ARC"),
+         BID_PERIOD >= prev_bid_period) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA")) %>% 
   group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT, BASE) %>% 
-  reframe(n_reserve = n()) %>% 
+  reframe(BID_PERIOD,
+          n_reserve = n()) %>% 
   mutate(EQUIPMENT = if_else(EQUIPMENT == "NA", NA, EQUIPMENT)) %>% 
-  rename(FLIGHT_DATE = PAIRING_DATE)
+  rename(FLIGHT_DATE = PAIRING_DATE) %>% 
+  distinct()
 
 
 ```
