@@ -1,11 +1,3 @@
----
-title: "Crew_WorkLoad"
-format: html
-editor: source
----
-
-## Packages
-```{r}
 
 if (!require(librarian)){
   install.packages("librarian")
@@ -22,11 +14,7 @@ previous_bid_period <- (as.character(format(seq(Sys.Date(), by = "-2 month", len
 
 fut_bid_period <- (as.character(format(seq(Sys.Date(), by = "1 month", length = 2)[2], "%Y-%m"))) 
 
-```
 
-
-## Pull in Reserve count 
-```{r}
 # Connect to the `PLAYGROUND` database and append data if necessary
 tryCatch({
   db_connection_pg <- DBI::dbConnect(odbc::odbc(),  # Establish a database connection using ODBC for the playground database
@@ -54,38 +42,32 @@ fp_q <- paste0("select* from AA_FINAL_PAIRING WHERE BID_PERIOD BETWEEN '", previ
 
 raw_fp <- dbGetQuery(db_connection_pg, fp_q)
 
-```
 
-# Clean Final Pairing
-```{r}
 
 clean_fp <- raw_fp %>% 
   select(FLIGHT_DATE, PAIRING_POSITION, BID_PERIOD, EQUIPMENT, CREW_ID, BASE) %>% 
   filter(!EQUIPMENT == "33Y",
          #BID_PERIOD >= prev_bid_period
-         ) %>% 
+  ) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA"),
          EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT),
          BASE = if_else(BASE == "HAL", "HNL", BASE)) %>%
   group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, BASE) %>% 
-  reframe(BID_PERIOD,
-          n_bid = length(unique(CREW_ID))) %>% 
+  reframe(#BID_PERIOD,
+          n_bid = n_distinct(CREW_ID)) %>% 
   distinct()
-  
-  
 
-```
-
-
-## Clean Reserve
-```{r}
+# t <- clean_fp %>% 
+#   filter(FLIGHT_DATE == "2024-08-31",
+#          PAIRING_POSITION == "FA") %>% 
+#   mutate(n = length(unique(CREW_ID)))
 
 clean_reserve <- raw_reserve %>% 
-  filter(TRANSACTION_CODE %in% c("RLV", "SCR", "ARC"),
+  filter(TRANSACTION_CODE %in% c("RLV", "SCR", "ARC", "RSV"),
          #BID_PERIOD >= prev_bid_period
-         ) %>% 
+  ) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
                                    "FA")) %>% 
@@ -97,15 +79,11 @@ clean_reserve <- raw_reserve %>%
   distinct()
 
 
-```
-
-## Join Counts
-```{r}
 
 combined_gold <- inner_join(clean_fp, clean_reserve) %>% 
   mutate(workload = round((n_reserve/n_bid),2))
 
 write_xlsx(combined_gold, "Z:/OperationsResourcePlanningAnalysis/Work_Load/workload_data.xlsx")
 
-
-```
+print("Data Uploaded")
+Sys.sleep(10)
