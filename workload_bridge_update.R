@@ -10,10 +10,11 @@ librarian::shelf(tidyverse, here, DBI, odbc, writexl)
 
 current_bid_period <- substr(as.character(Sys.Date()), 1, 7)
 
-previous_bid_period <- (as.character(format(seq(Sys.Date(), by = "-2 month", length = 2)[2], "%Y-%m"))) 
+previous_bid_period <- (as.character(format(seq(Sys.Date(), by = "-6 month", length = 2)[2], "%Y-%m"))) 
+
+previous_filt_bid_period <- (as.character(format(seq(Sys.Date(), by = "-5 month", length = 2)[2], "%Y-%m"))) 
 
 fut_bid_period <- (as.character(format(seq(Sys.Date(), by = "1 month", length = 2)[2], "%Y-%m"))) 
-
 
 # Connect to the `PLAYGROUND` database and append data if necessary
 tryCatch({
@@ -53,7 +54,8 @@ clean_fp <- raw_fp %>%
                                    PAIRING_POSITION, 
                                    "FA"),
          EQUIPMENT = if_else(PAIRING_POSITION == "FA", NA, EQUIPMENT),
-         BASE = if_else(BASE == "HAL", "HNL", BASE)) %>%
+         BASE = if_else(BASE == "HAL", "HNL", BASE),
+         PAIRING_POSITION = if_else(PAIRING_POSITION == "RO", "FO", PAIRING_POSITION)) %>%
   group_by(FLIGHT_DATE, PAIRING_POSITION, EQUIPMENT, BASE) %>% 
   reframe(#BID_PERIOD,
           n_bid = n_distinct(CREW_ID)) %>% 
@@ -70,7 +72,9 @@ clean_reserve <- raw_reserve %>%
   ) %>% 
   mutate(PAIRING_POSITION = ifelse(PAIRING_POSITION %in% c("CA", "FO", "RO", "FA"),
                                    PAIRING_POSITION, 
-                                   "FA")) %>% 
+                                   "FA"),
+         BASE = if_else(BASE == "HAL", "HNL", BASE),
+         PAIRING_POSITION = if_else(PAIRING_POSITION == "RO", "FO", PAIRING_POSITION)) %>% 
   group_by(PAIRING_POSITION, PAIRING_DATE, EQUIPMENT, BASE) %>% 
   reframe(BID_PERIOD,
           n_reserve = n()) %>% 
@@ -81,7 +85,11 @@ clean_reserve <- raw_reserve %>%
 
 
 combined_gold <- inner_join(clean_fp, clean_reserve) %>% 
-  mutate(workload = round((n_reserve/n_bid),2))
+  mutate(workload = round((n_reserve/n_bid),2)) %>% 
+  filter(BID_PERIOD >= previous_filt_bid_period) %>% 
+  mutate(BID_PERIOD = as.factor(BID_PERIOD)) %>% 
+  mutate(PAIRING_POSITION = if_else(BASE == "LAX" & PAIRING_POSITION == "FA", "FA-LAX", PAIRING_POSITION),
+         PAIRING_POSITION = if_else(BASE == "HNL" & PAIRING_POSITION == "FA", "FA-HNL", PAIRING_POSITION))
 
 write_xlsx(combined_gold, "Z:/OperationsResourcePlanningAnalysis/Work_Load/workload_data.xlsx")
 
